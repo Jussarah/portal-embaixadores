@@ -2,6 +2,7 @@
 import io
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -10,7 +11,7 @@ from urllib.parse import parse_qs, urlparse
 import pandas as pd
 
 PLATAFORMAS = ["Instagram", "TikTok", "YouTube", "Facebook", "Kwai"]
-COLS_VIDEOS = ["Link", "Embaixador", "Rede", "Data", "Visualizações", "Curtidas", "Salvamentos"]
+COLS_VIDEOS = ["Link", "Embaixador", "Perfil", "Rede", "Data", "Visualizações", "Curtidas", "Salvamentos"]
 COLS_NUM = ["Visualizações", "Curtidas", "Salvamentos"]
 
 USER_RE = re.compile(r"^[A-Za-z0-9._]{2,30}$")
@@ -277,6 +278,9 @@ def buscar_youtube(video_id, api_key):
         "views": int(stats.get("viewCount", 0)),
         "likes": int(stats.get("likeCount", 0)),
         "data": pd.Timestamp(item["snippet"]["publishedAt"][:10]),
+        "canal": item["snippet"].get("channelTitle", ""),
+        "perfil": (f"https://www.youtube.com/channel/{item['snippet']['channelId']}"
+                   if item["snippet"].get("channelId") else ""),
     }
 
 
@@ -287,6 +291,7 @@ def videos_vazio():
     df = pd.DataFrame({
         "Link": pd.Series(dtype="str"),
         "Embaixador": pd.Series(dtype="str"),
+        "Perfil": pd.Series(dtype="str"),
         "Rede": pd.Series(dtype="str"),
         "Data": pd.Series(dtype="datetime64[ns]"),
         "Visualizações": pd.Series(dtype="int64"),
@@ -478,3 +483,214 @@ def gerar_pdf(videos_df, ini, fim):
         linhas,
     )
     return bytes(pdf.output())
+
+
+# --------------------------------------------------------------------------- #
+# Diretório de embaixadores (Google Sheets / arquivo)
+# --------------------------------------------------------------------------- #
+VAZIOS = {"", "none", "nan", "null", "-", "n/a"}
+
+
+def eh_vazio(v):
+    return str(v).strip().lower() in VAZIOS
+
+
+def sheet_csv_url(url):
+    """Converte o link de compartilhamento do Google Sheets em link de exportação CSV."""
+    url = url.strip()
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
+    if not m:
+        return url
+    gid = re.search(r"[#&?]gid=(\d+)", url)
+    base = f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv"
+    return base + (f"&gid={gid.group(1)}" if gid else "")
+
+
+def verificar_diretorio(df):
+    """Procura colunas com links, corrige o que dá e lista o que precisa de revisão."""
+    colunas_link = [
+        c for c in df.columns
+        if df[c].astype(str).str.contains(r"https?://|www\.|\.com|\.ai/", case=False, na=False).any()
+    ]
+    nome_col = df.columns[0] if len(df.columns) else None
+    corrigido = df.copy()
+    problemas = []
+    for c in colunas_link:
+        for i, v in df[c].items():
+            if eh_vazio(v):
+                continue
+            r = corrigir_link(str(v))
+            if r["Status"] in (ST_OK, ST_FIX):
+                corrigido.at[i, c] = r["Link corrigido"]
+            if r["Status"] != ST_OK:
+                problemas.append({
+                    "Linha": i + 2,
+                    "Embaixador": str(df.at[i, nome_col]).strip() if nome_col is not None else "",
+                    "Coluna": c,
+                    "Original": str(v).strip(),
+                    "Link corrigido": r["Link corrigido"],
+                    "Status": r["Status"],
+                    "Observação": r["Observação"],
+                })
+    cols = ["Linha", "Embaixador", "Coluna", "Original", "Link corrigido", "Status", "Observação"]
+    return pd.DataFrame(problemas, columns=cols), corrigido, colunas_link
+
+
+def excel_simples(abas):
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        for nome, d in abas.items():
+            d.to_excel(w, sheet_name=nome[:31], index=False)
+        fill = PatternFill("solid", fgColor="5B3FD9")
+        for ws in w.book.worksheets:
+            for cell in ws[1]:
+                cell.fill = fill
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            for col in ws.columns:
+                largura = max((len(str(c.value)) if c.value is not None else 0) for c in col)
+                ws.column_dimensions[col[0].column_letter].width = min(max(14, largura + 3), 60)
+            ws.freeze_panes = "A2"
+    return buf.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+# Radar de vídeos (YouTube, via API gratuita do Google)
+# --------------------------------------------------------------------------- #
+def _yt_get(endpoint, params, key):
+    q = urllib.parse.urlencode({**params, "key": key})
+    try:
+        with urllib.request.urlopen(f"https://www.googleapis.com/youtube/v3/{endpoint}?{q}", timeout=20) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read().decode("utf-8"))["error"]["message"]
+        except Exception:
+            msg = str(e)
+        raise ValueError(msg)
+
+
+def youtube_canal_ref(url):
+    """Devolve (tipo, valor) do canal a partir do link, ou None."""
+    u = _parse(url)
+    if not u or _plataforma_do_host(_host(u)) != "YouTube":
+        return None
+    segs = [s for s in u.path.split("/") if s]
+    if not segs:
+        return None
+    first = segs[0]
+    if first.startswith("@"):
+        return ("handle", first)
+    if first == "channel" and len(segs) > 1:
+        return ("id", segs[1])
+    if first == "user" and len(segs) > 1:
+        return ("user", segs[1])
+    if first == "c" and len(segs) > 1:
+        return ("handle", "@" + segs[1])
+    if first in ("watch", "shorts", "live", "embed", "playlist", "results", "feed"):
+        return None
+    return ("handle", "@" + first)
+
+
+def _playlist_de_uploads(ref, key):
+    tipo, valor = ref
+    if tipo == "id" and valor.startswith("UC"):
+        return "UU" + valor[2:]
+    params = {"part": "contentDetails"}
+    if tipo == "handle":
+        params["forHandle"] = valor
+    elif tipo == "user":
+        params["forUsername"] = valor
+    else:
+        params["id"] = valor
+    d = _yt_get("channels", params, key)
+    if not d.get("items"):
+        raise ValueError("Canal não encontrado")
+    return d["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+
+
+def radar_youtube(ref, key, ini, fim, min_views=0, limite=500):
+    """Lista os vídeos de um canal no período que passaram das views mínimas."""
+    playlist = _playlist_de_uploads(ref, key)
+    ini_ts, fim_ts = pd.Timestamp(ini), pd.Timestamp(fim) + pd.Timedelta(days=1)
+    ids, pagina, parar = [], None, False
+    while not parar and len(ids) < limite:
+        params = {"part": "contentDetails", "playlistId": playlist, "maxResults": 50}
+        if pagina:
+            params["pageToken"] = pagina
+        d = _yt_get("playlistItems", params, key)
+        for it in d.get("items", []):
+            pub = pd.Timestamp(str(it["contentDetails"].get("videoPublishedAt", "1970-01-01"))[:10])
+            if pub < ini_ts:
+                parar = True
+            elif pub < fim_ts:
+                ids.append(it["contentDetails"]["videoId"])
+        pagina = d.get("nextPageToken")
+        if not pagina:
+            break
+    resultados = []
+    for i in range(0, len(ids), 50):
+        d = _yt_get("videos", {"part": "snippet,statistics", "id": ",".join(ids[i:i + 50])}, key)
+        for v in d.get("items", []):
+            stt = v.get("statistics", {})
+            views = int(stt.get("viewCount", 0))
+            if views < min_views:
+                continue
+            resultados.append({
+                "Canal": v["snippet"].get("channelTitle", ""),
+                "Título": v["snippet"].get("title", ""),
+                "Data": pd.Timestamp(v["snippet"]["publishedAt"][:10]),
+                "Visualizações": views,
+                "Curtidas": int(stt.get("likeCount", 0)),
+                "Link": f"https://www.youtube.com/watch?v={v['id']}",
+                "Rede": "YouTube",
+            })
+    return resultados
+
+
+# --------------------------------------------------------------------------- #
+# Buscar dados a partir de um link de vídeo
+# --------------------------------------------------------------------------- #
+def perfil_do_link(url):
+    """Extrai o link do perfil quando o link do vídeo traz o @usuário (TikTok, Instagram)."""
+    r = corrigir_link(url)
+    if "perfil extraído" in r["Observação"]:
+        return r["Link corrigido"]
+    return ""
+
+
+def buscar_dados_link(url, yt_key=""):
+    """Tenta ler views, curtidas e data de um vídeo. Levanta ValueError se não conseguir."""
+    rede = detectar_rede(url)
+    if rede == "YouTube" and yt_key:
+        vid = youtube_video_id(url)
+        if vid:
+            d = buscar_youtube(vid, yt_key)
+            return {"views": d["views"], "likes": d["likes"], "saves": None, "data": d["data"],
+                    "canal": d.get("canal", ""), "perfil": d.get("perfil", "")}
+    try:
+        from yt_dlp import YoutubeDL
+    except ImportError:
+        raise ValueError("a biblioteca yt-dlp não está instalada")
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True, "socket_timeout": 20}
+    try:
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as e:
+        texto = str(e).replace("ERROR: ", "").strip().splitlines()
+        raise ValueError((texto[0] if texto else "falha ao ler o link")[:160])
+    views, likes = info.get("view_count"), info.get("like_count")
+    if views is None and likes is None:
+        raise ValueError("a rede não devolveu os números deste vídeo")
+    data = None
+    if info.get("upload_date"):
+        data = pd.to_datetime(info["upload_date"], format="%Y%m%d", errors="coerce")
+    elif info.get("timestamp"):
+        data = pd.Timestamp(int(info["timestamp"]), unit="s").normalize()
+    return {
+        "views": int(views or 0), "likes": int(likes or 0), "saves": None, "data": data,
+        "canal": info.get("uploader") or info.get("channel") or "",
+        "perfil": info.get("uploader_url") or info.get("channel_url") or perfil_do_link(url),
+    }
