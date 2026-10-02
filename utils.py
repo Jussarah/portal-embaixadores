@@ -1,4 +1,4 @@
-"""Lógica do Portal de Embaixadores BS LATAM: correção de links, análise e relatórios."""
+"""Tifly by zsarytta: correção de links, análise de vídeos e relatórios."""
 import io
 import json
 import re
@@ -397,7 +397,7 @@ def gerar_pdf(videos_df, ini, fim):
             self.set_text_color(255, 255, 255)
             self.set_font("Helvetica", "B", 15)
             self.set_xy(10, 8)
-            self.cell(0, 8, "BS LATAM | Programa de Embaixadores")
+            self.cell(0, 8, "Tifly  |  by zsarytta")
             self.set_y(33)
             self.set_text_color(30, 30, 70)
 
@@ -412,7 +412,7 @@ def gerar_pdf(videos_df, ini, fim):
     pdf.add_page()
 
     pdf.set_font("Helvetica", "B", 17)
-    pdf.cell(0, 10, _t("Relatório de desempenho de vídeos"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, _t("Relatório de embaixadores"), new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 11)
     pdf.set_text_color(90, 70, 190)
     pdf.cell(0, 7, _t(f"Período: {ini:%d/%m/%Y} a {fim:%d/%m/%Y}"), new_x="LMARGIN", new_y="NEXT")
