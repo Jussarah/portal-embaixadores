@@ -1,0 +1,1084 @@
+streamlit>=1.50.0
+pandas
+openpyxl
+fpdf2from datetime import date, datetime, timedelta
+
+import pandas as pd
+import streamlit as st
+
+import utils as U
+
+st.set_page_config(page_title="BS LATAM | Embaixadores", page_icon="💠", layout="wide")
+
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Sora:wght@300;400;600&display=swap');
+
+html, body, [data-testid="stAppViewContainer"] { font-family: 'Sora', sans-serif; }
+[data-testid="stAppViewContainer"] {
+  background:
+    radial-gradient(1100px 560px at 88% -8%, rgba(139,92,246,.38), transparent 60%),
+    radial-gradient(900px 520px at -8% 108%, rgba(255,95,184,.24), transparent 60%),
+    linear-gradient(135deg, #090d29 0%, #141047 55%, #1f1250 100%);
+}
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #0d1037 0%, #1b1253 100%);
+  border-right: 1px solid rgba(255,255,255,.08);
+}
+h1, h2, h3, h5 { font-family: 'Orbitron', sans-serif !important; letter-spacing: .03em; color: #ffffff; }
+
+.hero { padding: 6px 0 4px 0; }
+.hero .title { font-family: 'Orbitron', sans-serif; font-size: 2.1rem; font-weight: 700; color: #fff; line-height: 1.15; }
+.hero .sub { color: #c9c6ff; font-size: .95rem; margin-top: 4px; }
+.divider { height: 2px; background: linear-gradient(90deg, #4f8bff, #8b5cf6, #ff5fb8); border-radius: 2px; margin: 12px 0 24px 0; }
+
+.brand { font-family: 'Orbitron', sans-serif; font-size: 1.35rem; letter-spacing: .3em; text-align: center; color: #fff;
+  text-shadow: 0 0 14px rgba(139,92,246,.9); margin: 14px 0 4px 0; }
+.status { background: rgba(70, 220, 160, .12); border: 1px solid rgba(70,220,160,.45); color: #7ff0c4;
+  border-radius: 14px; padding: 12px 14px; font-size: .9rem; }
+
+.kpi { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); border-radius: 18px;
+  padding: 16px 20px; backdrop-filter: blur(10px); box-shadow: 0 0 26px rgba(139,92,246,.18); }
+.kpi .lbl { font-size: .8rem; color: #bdbaff; }
+.kpi .val { font-family: 'Orbitron', sans-serif; font-size: 1.75rem; font-weight: 700;
+  background: linear-gradient(90deg, #8fb4ff, #ff7ac8); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+.stButton > button, [data-testid="stDownloadButton"] button, [data-testid="stFormSubmitButton"] button {
+  background: linear-gradient(90deg, #4f8bff, #8b5cf6 55%, #ff5fb8); color: #fff; border: 0; border-radius: 14px;
+  padding: .6rem 1.4rem; font-weight: 600; box-shadow: 0 8px 24px rgba(139,92,246,.35);
+}
+.stButton > button:hover, [data-testid="stDownloadButton"] button:hover { filter: brightness(1.12); color: #fff; }
+.stTextArea textarea, .stTextInput input, .stDateInput input, .stNumberInput input {
+  background: rgba(255,255,255,.07) !important; color: #fff !important;
+  border: 1px solid rgba(255,255,255,.18) !important; border-radius: 12px !important;
+}
+.footer { color: #8f8cc4; font-size: .8rem; border-top: 1px solid rgba(255,255,255,.1); margin-top: 36px; padding-top: 14px; }
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
+REDES = U.PLATAFORMAS + ["Outra"]
+
+
+# --------------------------------------------------------------------------- #
+# Estado
+# --------------------------------------------------------------------------- #
+def init_state():
+    st.session_state.setdefault("links", [])
+    st.session_state.setdefault("txt_links", "")
+    st.session_state.setdefault("videos", U.videos_vazio())
+    st.session_state.setdefault("p_ini", date.today() - timedelta(days=30))
+    st.session_state.setdefault("p_fim", date.today())
+    st.session_state.setdefault("p_redes", REDES)
+
+
+init_state()
+
+
+def kpi_html(label, value):
+    return f'<div class="kpi"><div class="lbl">{label}</div><div class="val">{value}</div></div>'
+
+
+def kpis(items):
+    cols = st.columns(len(items))
+    for col, (label, value) in zip(cols, items):
+        col.markdown(kpi_html(label, value), unsafe_allow_html=True)
+
+
+def periodo():
+    ini, fim = st.session_state.p_ini, st.session_state.p_fim
+    redes = st.session_state.p_redes
+    return ini, fim, redes, U.filtrar_periodo(st.session_state.videos, ini, fim, redes)
+
+
+def youtube_key():
+    try:
+        return st.secrets.get("YOUTUBE_API_KEY", "")
+    except Exception:
+        return ""
+
+
+# --------------------------------------------------------------------------- #
+# Barra lateral
+# --------------------------------------------------------------------------- #
+with st.sidebar:
+    st.markdown('<div class="status">● Sistema online<br><small>Portal de embaixadores</small></div>',
+                unsafe_allow_html=True)
+    st.markdown('<div class="brand">BS LATAM</div><div class="divider"></div>', unsafe_allow_html=True)
+    modulo = st.radio(
+        "Módulos operativos",
+        ["🔗  Corretor de links", "📊  Análise de vídeos", "📥  Relatórios"],
+    )
+    with st.expander("🔑 YouTube API (opcional)"):
+        chave_digitada = st.text_input("Chave da API", type="password",
+                                       help="Gratuita no Google Cloud. Preenche views e curtidas de vídeos do YouTube.")
+    yt_key = chave_digitada or youtube_key()
+    st.markdown("---")
+    if st.button("♻️ Reiniciar dados"):
+        for k in ("links", "videos", "txt_links"):
+            st.session_state.pop(k, None)
+        init_state()
+        st.rerun()
+
+st.markdown(
+    '<div class="hero"><div class="title">Portal de Embaixadores</div>'
+    '<div class="sub">Links de perfil corrigidos e desempenho de vídeos em um só lugar.</div></div>'
+    '<div class="divider"></div>',
+    unsafe_allow_html=True,
+)
+
+
+# --------------------------------------------------------------------------- #
+# Aba 1: Corretor de links
+# --------------------------------------------------------------------------- #
+def processar_links():
+    antigos = [r["Original"] for r in st.session_state.links]
+    novo = st.session_state.txt_links
+    st.session_state.links = U.corrigir_lista("\n".join(antigos) + "\n" + novo)
+    st.session_state.txt_links = ""
+
+
+def limpar_links():
+    st.session_state.links = []
+
+
+def aba_links():
+    st.subheader("Corretor de links de perfil")
+    st.caption("Funciona com Instagram, TikTok, YouTube, Facebook e Kwai. Cole um link por vez ou vários de uma vez.")
+    st.text_area("Cole os links de perfil", key="txt_links", height=140,
+                 placeholder="https://www.instagram.com/usuario/?igsh=abc123\nhttps://tiktok.com/@usuario?lang=pt-BR")
+    c1, c2, _ = st.columns([1, 1, 4])
+    c1.button("✨ Corrigir links", on_click=processar_links)
+    c2.button("Limpar lista", on_click=limpar_links)
+
+    links = st.session_state.links
+    if not links:
+        st.info("Cole os links acima e clique em Corrigir links para ver o resultado.")
+        return
+    df = pd.DataFrame(links)
+    cont = df["Status"].value_counts()
+    kpis([
+        ("Links na lista", len(df)),
+        ("Corrigidos", int(cont.get(U.ST_FIX, 0))),
+        ("Para verificar", int(cont.get(U.ST_CHECK, 0)) + int(cont.get(U.ST_DUP, 0))),
+        ("Inválidos", int(cont.get(U.ST_BAD, 0))),
+    ])
+    st.write("")
+    st.dataframe(
+        df, hide_index=True, width="stretch",
+        column_config={"Link corrigido": st.column_config.LinkColumn("Link corrigido")},
+    )
+    prontos = df[df["Status"].isin([U.ST_OK, U.ST_FIX])]["Link corrigido"].tolist()
+    if prontos:
+        st.markdown("##### Links prontos para copiar")
+        st.code("\n".join(prontos), language=None)
+
+
+# --------------------------------------------------------------------------- #
+# Aba 2: Análise de vídeos
+# --------------------------------------------------------------------------- #
+def aba_videos():
+    st.subheader("Análise de vídeos por período")
+    videos = st.session_state.videos
+
+    with st.expander("➕ Adicionar vídeo", expanded=len(videos) == 0):
+        with st.form("form_video", clear_on_submit=True):
+            link = st.text_input("Link do vídeo")
+            c1, c2 = st.columns(2)
+            emb = c1.text_input("Embaixador")
+            data = c2.date_input("Data de postagem", value=date.today(), format="DD/MM/YYYY")
+            c3, c4, c5 = st.columns(3)
+            views = c3.number_input("Visualizações", min_value=0, step=1)
+            likes = c4.number_input("Curtidas", min_value=0, step=1)
+            saves = c5.number_input("Salvamentos", min_value=0, step=1)
+            auto = st.checkbox("Buscar views e curtidas automaticamente (só YouTube, precisa da chave na barra lateral)")
+            enviado = st.form_submit_button("Adicionar vídeo")
+        if enviado:
+            if not link.strip():
+                st.warning("Cole o link do vídeo.")
+            else:
+                rede = U.detectar_rede(link)
+                data_ts = pd.Timestamp(data)
+                if auto and rede == "YouTube":
+                    vid = U.youtube_video_id(link)
+                    if not yt_key:
+                        st.warning("Informe a chave da YouTube API na barra lateral para a busca automática.")
+                    elif not vid:
+                        st.warning("Não consegui identificar o vídeo neste link do YouTube.")
+                    else:
+                        try:
+                            stats = U.buscar_youtube(vid, yt_key)
+                            views, likes, data_ts = stats["views"], stats["likes"], stats["data"]
+                        except Exception as e:
+                            st.warning(f"Busca automática falhou ({e}). Usei os números digitados.")
+                nova = pd.DataFrame([{
+                    "Link": link.strip(), "Embaixador": emb.strip(), "Rede": rede, "Data": data_ts,
+                    "Visualizações": int(views), "Curtidas": int(likes), "Salvamentos": int(saves),
+                }])
+                st.session_state.videos = pd.concat([U.normalizar_videos(videos), nova], ignore_index=True)
+                st.rerun()
+
+    st.markdown("##### Período")
+    c1, c2, c3 = st.columns([1, 1, 2])
+    c1.date_input("De", key="p_ini", format="DD/MM/YYYY")
+    c2.date_input("Até", key="p_fim", format="DD/MM/YYYY")
+    c3.multiselect("Redes", REDES, key="p_redes")
+
+    resumo_box = st.container()
+
+    st.markdown("##### Tabela de vídeos")
+    st.caption("Edite os números direto na tabela. Para apagar, selecione a linha e use a lixeira.")
+    editada = st.data_editor(
+        U.normalizar_videos(st.session_state.videos),
+        num_rows="dynamic", hide_index=True, width="stretch", key="ed_videos",
+        column_config={
+            "Link": st.column_config.TextColumn("Link do vídeo", width="large"),
+            "Rede": st.column_config.SelectboxColumn("Rede", options=REDES),
+            "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+            "Visualizações": st.column_config.NumberColumn(format="%d", min_value=0),
+            "Curtidas": st.column_config.NumberColumn(format="%d", min_value=0),
+            "Salvamentos": st.column_config.NumberColumn(format="%d", min_value=0),
+        },
+    )
+    st.session_state.videos = U.normalizar_videos(editada)
+
+    ini, fim, redes, filtrado = periodo()
+    with resumo_box:
+        if ini > fim:
+            st.error("A data inicial é maior que a final.")
+        t = U.totais(filtrado)
+        kpis([(k, U.fmt(v)) for k, v in t.items()])
+        if len(filtrado):
+            st.write("")
+            por_rede = U.resumo_por_rede(filtrado)
+            g1, g2 = st.columns([3, 2])
+            g1.bar_chart(por_rede.set_index("Rede")[["Visualizações", "Curtidas", "Salvamentos"]],
+                         color=["#4f8bff", "#8b5cf6", "#ff5fb8"])
+            g2.dataframe(por_rede, hide_index=True, width="stretch")
+        else:
+            st.info("Nenhum vídeo neste período. Adicione vídeos ou ajuste as datas.")
+
+
+# --------------------------------------------------------------------------- #
+# Aba 3: Relatórios
+# --------------------------------------------------------------------------- #
+def aba_relatorios():
+    st.subheader("Relatórios")
+    ini, fim, redes, filtrado = periodo()
+    st.caption(f"Período do relatório: {ini:%d/%m/%Y} a {fim:%d/%m/%Y}. "
+               "Para mudar datas e redes, use a aba Análise de vídeos.")
+    t = U.totais(filtrado)
+    kpis([(k, U.fmt(v)) for k, v in t.items()])
+    st.write("")
+    if filtrado.empty and not st.session_state.links:
+        st.info("Ainda não há dados para exportar. Corrija links ou adicione vídeos primeiro.")
+        return
+    links_df = pd.DataFrame(st.session_state.links)
+    stamp = f"{ini:%Y%m%d}_{fim:%Y%m%d}"
+    c1, c2, _ = st.columns([1, 1, 2])
+    c1.download_button(
+        "📊 Baixar planilha (Excel)", data=U.gerar_excel(links_df, filtrado, ini, fim),
+        file_name=f"relatorio_embaixadores_{stamp}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    c2.download_button(
+        "📄 Baixar relatório (PDF)", data=U.gerar_pdf(filtrado, ini, fim),
+        file_name=f"relatorio_embaixadores_{stamp}.pdf", mime="application/pdf",
+    )
+
+
+if modulo.startswith("🔗"):
+    aba_links()
+elif modulo.startswith("📊"):
+    aba_videos()
+else:
+    aba_relatorios()
+
+st.markdown(
+    f'<div class="footer">BS LATAM Embaixadores • {datetime.now():%Y-%m-%d %H:%M:%S} • Blood Strike Operations</div>',
+    unsafe_allow_html=True,
+)
+
+from datetime import date, datetime, timedelta
+
+import pandas as pd
+import streamlit as ststreamlit>=1.50.0
+pandas
+openpyxl
+fpdf2"""Lógica do Portal de Embaixadores BS LATAM: correção de links, análise e relatórios."""
+import io
+import json
+import re
+import urllib.parse
+import urllib.request
+from datetime import datetime
+from urllib.parse import parse_qs, urlparse
+
+import pandas as pd
+
+PLATAFORMAS = ["Instagram", "TikTok", "YouTube", "Facebook", "Kwai"]
+COLS_VIDEOS = ["Link", "Embaixador", "Rede", "Data", "Visualizações", "Curtidas", "Salvamentos"]
+COLS_NUM = ["Visualizações", "Curtidas", "Salvamentos"]
+
+USER_RE = re.compile(r"^[A-Za-z0-9._]{2,30}$")
+
+ST_OK = "✅ OK"
+ST_FIX = "🛠️ Corrigido"
+ST_CHECK = "⚠️ Verificar"
+ST_BAD = "❌ Inválido"
+ST_DUP = "🔁 Duplicado"
+
+
+# --------------------------------------------------------------------------- #
+# Utilidades de URL
+# --------------------------------------------------------------------------- #
+def _is(host, *domains):
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def _plataforma_do_host(host):
+    if _is(host, "instagram.com", "instagr.am"):
+        return "Instagram"
+    if _is(host, "tiktok.com"):
+        return "TikTok"
+    if _is(host, "youtube.com", "youtu.be"):
+        return "YouTube"
+    if _is(host, "facebook.com", "fb.com", "fb.watch", "fb.me"):
+        return "Facebook"
+    if _is(host, "kwai.com", "kw.ai", "kwai-video.com"):
+        return "Kwai"
+    return None
+
+
+def _parse(raw):
+    s = str(raw or "").strip().strip("<>\"'“”‘’,;()[]")
+    if not s:
+        return None
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", s):
+        s = "https://" + s.lstrip("/")
+    return urlparse(s)
+
+
+def _host(u):
+    host = (u.hostname or "").lower()
+    for p in ("www.", "m.", "mobile.", "web.", "mbasic.", "l.", "touch."):
+        if host.startswith(p):
+            host = host[len(p):]
+            break
+    return host
+
+
+def detectar_rede(url):
+    u = _parse(url)
+    if not u:
+        return "Outra"
+    return _plataforma_do_host(_host(u)) or "Outra"
+
+
+# --------------------------------------------------------------------------- #
+# Corretor de links de perfil
+# --------------------------------------------------------------------------- #
+def _res(original, rede, corrigido, status, obs):
+    return {
+        "Original": original,
+        "Rede": rede or "—",
+        "Link corrigido": corrigido,
+        "Status": status,
+        "Observação": obs,
+    }
+
+
+def _final(original, rede, corrigido, notas, u=None):
+    igual = original.strip().rstrip("/") == corrigido.rstrip("/")
+    if igual:
+        return _res(original, rede, corrigido, ST_OK, "Já está no padrão")
+    if not notas:
+        notas = ["parâmetros de rastreio removidos" if (u is not None and u.query) else "link padronizado"]
+    return _res(original, rede, corrigido, ST_FIX, "; ".join(notas))
+
+
+def _instagram(orig, u, segs):
+    reservadas = {"explore", "accounts", "direct", "about", "web", "legal", "privacy", "developer"}
+    if not segs:
+        return _res(orig, "Instagram", "", ST_BAD, "Link sem usuário")
+    first = segs[0].lower()
+    if first in ("p", "reel", "reels", "tv"):
+        return _res(orig, "Instagram", f"https://www.instagram.com{u.path}", ST_CHECK,
+                    "Link de publicação, não identifica o perfil")
+    if first == "stories" and len(segs) > 1:
+        user = segs[1]
+        notas = ["perfil extraído do link de story"]
+    elif len(segs) > 1 and segs[1].lower() in ("p", "reel", "tv"):
+        user = segs[0]
+        notas = ["perfil extraído do link da publicação"]
+    elif first in reservadas:
+        return _res(orig, "Instagram", "", ST_BAD, "Não é link de perfil")
+    else:
+        user = segs[0]
+        notas = []
+    if not USER_RE.match(user):
+        return _res(orig, "Instagram", "", ST_BAD, "Nome de usuário inválido")
+    return _final(orig, "Instagram", f"https://www.instagram.com/{user}/", notas, u)
+
+
+def _tiktok(orig, host, u, segs):
+    reservadas = {"foryou", "discover", "tag", "music", "search", "explore", "live", "following", "friends"}
+    if host.startswith(("vm.", "vt.")) or (segs and segs[0] == "t"):
+        return _res(orig, "TikTok", f"https://{host}{u.path}", ST_CHECK,
+                    "Link curto: abra no navegador e copie o link do perfil")
+    if not segs:
+        return _res(orig, "TikTok", "", ST_BAD, "Link sem usuário")
+    first = segs[0]
+    notas = []
+    if first.startswith("@"):
+        user = first[1:]
+        if len(segs) > 1 and segs[1].lower() in ("video", "photo", "live"):
+            notas.append("perfil extraído do link do vídeo")
+    elif first.lower() in reservadas:
+        return _res(orig, "TikTok", "", ST_BAD, "Não é link de perfil")
+    else:
+        user = first
+        notas.append("@ adicionado ao usuário")
+    if not re.match(r"^[A-Za-z0-9._]{2,24}$", user):
+        return _res(orig, "TikTok", "", ST_BAD, "Nome de usuário inválido")
+    return _final(orig, "TikTok", f"https://www.tiktok.com/@{user}", notas, u)
+
+
+def _youtube(orig, host, u, segs, q):
+    if host == "youtu.be":
+        return _res(orig, "YouTube", f"https://youtu.be{u.path}", ST_CHECK, "Link de vídeo, não de canal")
+    if not segs:
+        return _res(orig, "YouTube", "", ST_BAD, "Link sem canal")
+    first = segs[0]
+    low = first.lower()
+    if low in ("watch", "shorts", "live", "embed", "playlist", "results", "feed") or "v" in q:
+        if "v" in q:
+            corr = f"https://www.youtube.com/watch?v={q['v'][0]}"
+        else:
+            corr = f"https://www.youtube.com{u.path}"
+        return _res(orig, "YouTube", corr, ST_CHECK, "Link de vídeo ou lista, não de canal")
+    if first.startswith("@"):
+        notas = ["sufixo da página removido"] if len(segs) > 1 else []
+        return _final(orig, "YouTube", f"https://www.youtube.com/{first}", notas, u)
+    if low == "channel" and len(segs) > 1:
+        return _final(orig, "YouTube", f"https://www.youtube.com/channel/{segs[1]}", [], u)
+    if low in ("c", "user") and len(segs) > 1:
+        return _final(orig, "YouTube", f"https://www.youtube.com/{low}/{segs[1]}", [], u)
+    return _res(orig, "YouTube", f"https://www.youtube.com/@{first}", ST_CHECK,
+                "Sem @ no link: confirme se este é o canal")
+
+
+def _facebook(orig, host, u, segs, q):
+    posts = {"watch", "reel", "reels", "share", "photo", "photos", "permalink.php", "story.php", "video",
+             "videos", "groups", "events", "hashtag", "stories", "sharer", "sharer.php", "plugins", "login"}
+    if host == "fb.watch":
+        return _res(orig, "Facebook", f"https://fb.watch{u.path}", ST_CHECK, "Link de vídeo, não de perfil")
+    if not segs:
+        return _res(orig, "Facebook", "", ST_BAD, "Link sem perfil")
+    first = segs[0]
+    low = first.lower()
+    if low == "profile.php":
+        pid = (q.get("id") or [""])[0]
+        if pid.isdigit():
+            return _final(orig, "Facebook", f"https://www.facebook.com/profile.php?id={pid}", [], u)
+        return _res(orig, "Facebook", "", ST_BAD, "profile.php sem ID numérico")
+    if low == "people" and len(segs) >= 3:
+        return _final(orig, "Facebook", f"https://www.facebook.com/people/{segs[1]}/{segs[2]}/", [], u)
+    if low == "pg" and len(segs) > 1:
+        first = segs[1]
+        low = first.lower()
+    if low in posts:
+        return _res(orig, "Facebook", f"https://www.facebook.com{u.path}", ST_CHECK,
+                    "Link de publicação, vídeo ou grupo, não de perfil")
+    if not re.match(r"^[A-Za-z0-9.\-]{5,50}$", first):
+        return _res(orig, "Facebook", "", ST_CHECK, "Usuário fora do padrão: confirme o link")
+    return _final(orig, "Facebook", f"https://www.facebook.com/{first}", [], u)
+
+
+def _kwai(orig, host, u, segs):
+    if host in ("kw.ai", "k.kwai.com") or (segs and segs[0].lower() in ("s", "sh")):
+        return _res(orig, "Kwai", f"https://{host}{u.path}", ST_CHECK,
+                    "Link curto: abra no navegador e copie o link do perfil")
+    if not segs:
+        return _res(orig, "Kwai", "", ST_BAD, "Link sem perfil")
+    first = segs[0]
+    if first.startswith("@"):
+        user = first[1:]
+        if not USER_RE.match(user):
+            return _res(orig, "Kwai", "", ST_BAD, "Nome de usuário inválido")
+        return _final(orig, "Kwai", f"https://www.kwai.com/@{user}", [], u)
+    if first.lower() == "profile" and len(segs) > 1:
+        return _final(orig, "Kwai", f"https://www.kwai.com/profile/{segs[1]}", [], u)
+    if first.lower() in ("video", "photo", "live", "feed"):
+        return _res(orig, "Kwai", f"https://www.kwai.com{u.path}", ST_CHECK, "Link de vídeo, não de perfil")
+    return _res(orig, "Kwai", f"https://www.kwai.com/@{first}", ST_CHECK,
+                "Sem @ no link: confirme abrindo o perfil")
+
+
+def corrigir_link(raw):
+    original = str(raw).strip()
+    u = _parse(original)
+    if not u or not u.hostname:
+        return _res(original, None, "", ST_BAD, "Link vazio ou ilegível")
+    host = _host(u)
+    rede = _plataforma_do_host(host)
+    segs = [s for s in u.path.split("/") if s]
+    q = parse_qs(u.query)
+    if rede == "Instagram":
+        return _instagram(original, u, segs)
+    if rede == "TikTok":
+        return _tiktok(original, host, u, segs)
+    if rede == "YouTube":
+        return _youtube(original, host, u, segs, q)
+    if rede == "Facebook":
+        return _facebook(original, host, u, segs, q)
+    if rede == "Kwai":
+        return _kwai(original, host, u, segs)
+    return _res(original, None, "", ST_BAD, "Rede não reconhecida")
+
+
+def corrigir_lista(texto):
+    """Recebe links separados por espaço, vírgula ou quebra de linha."""
+    tokens = [t for t in re.split(r"[\s,;]+", texto or "") if t.strip()]
+    vistos, resultados = set(), []
+    for t in tokens:
+        r = corrigir_link(t)
+        chave = r["Link corrigido"].lower().rstrip("/")
+        if chave and chave in vistos:
+            r["Status"] = ST_DUP
+            r["Observação"] = "Mesmo perfil já está na lista"
+        elif chave:
+            vistos.add(chave)
+        resultados.append(r)
+    return resultados
+
+
+# --------------------------------------------------------------------------- #
+# YouTube (opcional, com chave gratuita da API do Google)
+# --------------------------------------------------------------------------- #
+def youtube_video_id(url):
+    u = _parse(url)
+    if not u:
+        return None
+    host = _host(u)
+    segs = [s for s in u.path.split("/") if s]
+    if host == "youtu.be" and segs:
+        return segs[0]
+    q = parse_qs(u.query)
+    if "v" in q:
+        return q["v"][0]
+    if len(segs) > 1 and segs[0] in ("shorts", "live", "embed"):
+        return segs[1]
+    return None
+
+
+def buscar_youtube(video_id, api_key):
+    params = urllib.parse.urlencode({"part": "statistics,snippet", "id": video_id, "key": api_key})
+    with urllib.request.urlopen(f"https://www.googleapis.com/youtube/v3/videos?{params}", timeout=15) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    if not data.get("items"):
+        raise ValueError("Vídeo não encontrado")
+    item = data["items"][0]
+    stats = item.get("statistics", {})
+    return {
+        "views": int(stats.get("viewCount", 0)),
+        "likes": int(stats.get("likeCount", 0)),
+        "data": pd.Timestamp(item["snippet"]["publishedAt"][:10]),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Análise por período
+# --------------------------------------------------------------------------- #
+def videos_vazio():
+    df = pd.DataFrame({
+        "Link": pd.Series(dtype="str"),
+        "Embaixador": pd.Series(dtype="str"),
+        "Rede": pd.Series(dtype="str"),
+        "Data": pd.Series(dtype="datetime64[ns]"),
+        "Visualizações": pd.Series(dtype="int64"),
+        "Curtidas": pd.Series(dtype="int64"),
+        "Salvamentos": pd.Series(dtype="int64"),
+    })
+    return df
+
+
+def normalizar_videos(df):
+    d = df.copy()
+    for c in COLS_VIDEOS:
+        if c not in d.columns:
+            d[c] = None
+    d = d[COLS_VIDEOS]
+    d["Data"] = pd.to_datetime(d["Data"], errors="coerce")
+    for c in COLS_NUM:
+        d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0).astype("int64")
+    return d
+
+
+def filtrar_periodo(df, ini, fim, redes=None):
+    d = normalizar_videos(df)
+    ini_ts, fim_ts = pd.Timestamp(ini), pd.Timestamp(fim) + pd.Timedelta(days=1)
+    d = d[(d["Data"] >= ini_ts) & (d["Data"] < fim_ts)]
+    if redes:
+        d = d[d["Rede"].isin(redes)]
+    return d.sort_values("Data").reset_index(drop=True)
+
+
+def totais(df):
+    return {
+        "Vídeos": int(len(df)),
+        "Visualizações": int(df["Visualizações"].sum()) if len(df) else 0,
+        "Curtidas": int(df["Curtidas"].sum()) if len(df) else 0,
+        "Salvamentos": int(df["Salvamentos"].sum()) if len(df) else 0,
+    }
+
+
+def resumo_por_rede(df):
+    if df.empty:
+        return pd.DataFrame(columns=["Rede", "Vídeos"] + COLS_NUM)
+    g = df.groupby("Rede", dropna=False).agg(
+        Vídeos=("Link", "size"),
+        Visualizações=("Visualizações", "sum"),
+        Curtidas=("Curtidas", "sum"),
+        Salvamentos=("Salvamentos", "sum"),
+    ).reset_index()
+    return g.sort_values("Visualizações", ascending=False).reset_index(drop=True)
+
+
+def fmt(n):
+    return f"{int(n):,}".replace(",", ".")
+
+
+# --------------------------------------------------------------------------- #
+# Relatórios
+# --------------------------------------------------------------------------- #
+def gerar_excel(links_df, videos_df, ini, fim):
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    resumo = pd.DataFrame(
+        [("Período", f"{ini:%d/%m/%Y} a {fim:%d/%m/%Y}")] + [(k, v) for k, v in totais(videos_df).items()],
+        columns=["Indicador", "Valor"],
+    )
+    por_rede = resumo_por_rede(videos_df)
+    videos_out = videos_df.copy()
+    videos_out["Data"] = videos_out["Data"].dt.strftime("%d/%m/%Y")
+    links_out = links_df if len(links_df) else pd.DataFrame(
+        columns=["Original", "Rede", "Link corrigido", "Status", "Observação"])
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        resumo.to_excel(w, sheet_name="Resumo", index=False)
+        por_rede.to_excel(w, sheet_name="Por rede", index=False)
+        videos_out.to_excel(w, sheet_name="Vídeos", index=False)
+        links_out.to_excel(w, sheet_name="Links corrigidos", index=False)
+        header_fill = PatternFill("solid", fgColor="5B3FD9")
+        for ws in w.book.worksheets:
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            for col in ws.columns:
+                largura = max((len(str(c.value)) if c.value is not None else 0) for c in col)
+                ws.column_dimensions[col[0].column_letter].width = min(max(14, largura + 3), 60)
+            ws.freeze_panes = "A2"
+            for row in ws.iter_rows(min_row=2):
+                for cell in row:
+                    if isinstance(cell.value, int):
+                        cell.number_format = "#,##0"
+    return buf.getvalue()
+
+
+def _t(s):
+    return str(s).encode("latin-1", "replace").decode("latin-1")
+
+
+def gerar_pdf(videos_df, ini, fim):
+    from fpdf import FPDF
+
+    class PDF(FPDF):
+        def header(self):
+            self.set_fill_color(18, 16, 62)
+            self.rect(0, 0, 210, 26, "F")
+            self.set_fill_color(255, 95, 184)
+            self.rect(0, 26, 210, 1.2, "F")
+            self.set_text_color(255, 255, 255)
+            self.set_font("Helvetica", "B", 15)
+            self.set_xy(10, 8)
+            self.cell(0, 8, "BS LATAM | Programa de Embaixadores")
+            self.set_y(33)
+            self.set_text_color(30, 30, 70)
+
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("Helvetica", "I", 8)
+            self.set_text_color(120, 120, 150)
+            self.cell(0, 8, _t(f"Gerado em {datetime.now():%d/%m/%Y %H:%M}  |  Página {self.page_no()}"), align="C")
+
+    pdf = PDF(format="A4")
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 17)
+    pdf.cell(0, 10, _t("Relatório de desempenho de vídeos"), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(90, 70, 190)
+    pdf.cell(0, 7, _t(f"Período: {ini:%d/%m/%Y} a {fim:%d/%m/%Y}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    # Cartões de totais
+    t = totais(videos_df)
+    x0, y0, w, h = 10, pdf.get_y(), 44, 20
+    for i, (k, v) in enumerate(t.items()):
+        x = x0 + i * (w + 4.67)
+        pdf.set_fill_color(240, 236, 255)
+        pdf.set_draw_color(139, 92, 246)
+        pdf.rect(x, y0, w, h, "DF")
+        pdf.set_xy(x, y0 + 3)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(100, 90, 160)
+        pdf.cell(w, 4, _t(k), align="C")
+        pdf.set_xy(x, y0 + 9)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_text_color(30, 30, 90)
+        pdf.cell(w, 8, fmt(v), align="C")
+    pdf.set_y(y0 + h + 8)
+
+    def tabela(titulo, colunas, linhas):
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_text_color(30, 30, 70)
+        pdf.cell(0, 8, _t(titulo), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_fill_color(91, 63, 217)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 9)
+        for nome, larg in colunas:
+            pdf.cell(larg, 7, _t(nome), border=0, fill=True, align="C")
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_text_color(40, 40, 80)
+        for i, linha in enumerate(linhas):
+            pdf.set_fill_color(247, 244, 255) if i % 2 == 0 else pdf.set_fill_color(255, 255, 255)
+            for (nome, larg), val in zip(colunas, linha):
+                numerico = bool(re.match(r"^[\d.]+$", str(val)))
+                pdf.cell(larg, 6.5, _t(val), fill=True, align="R" if numerico else "L")
+            pdf.ln()
+        pdf.ln(5)
+
+    por_rede = resumo_por_rede(videos_df)
+    tabela(
+        "Por rede social",
+        [("Rede", 50), ("Vídeos", 30), ("Visualizações", 40), ("Curtidas", 35), ("Salvamentos", 35)],
+        [(r["Rede"], fmt(r["Vídeos"]), fmt(r["Visualizações"]), fmt(r["Curtidas"]), fmt(r["Salvamentos"]))
+         for _, r in por_rede.iterrows()],
+    )
+
+    linhas = []
+    for _, r in videos_df.iterrows():
+        link = str(r["Link"])
+        link = link if len(link) <= 30 else link[:27] + "..."
+        data = r["Data"].strftime("%d/%m/%Y") if pd.notna(r["Data"]) else "-"
+        linhas.append((str(r["Embaixador"] or "-")[:20], str(r["Rede"] or "-"), data, link,
+                       fmt(r["Visualizações"]), fmt(r["Curtidas"]), fmt(r["Salvamentos"])))
+    tabela(
+        "Vídeos do período",
+        [("Embaixador", 32), ("Rede", 20), ("Data", 22), ("Link", 44), ("Views", 24), ("Curtidas", 24),
+         ("Salv.", 24)],
+        linhas,
+    )
+    return bytes(pdf.output())
+
+
+
+import utils as U
+
+st.set_page_config(page_title="BS LATAM | Embaixadores", page_icon="💠", layout="wide")
+
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Sora:wght@300;400;600&display=swap');
+
+html, body, [data-testid="stAppViewContainer"] { font-family: 'Sora', sans-serif; }
+[data-testid="stAppViewContainer"] {
+  background:
+    radial-gradient(1100px 560px at 88% -8%, rgba(139,92,246,.38), transparent 60%),
+    radial-gradient(900px 520px at -8% 108%, rgba(255,95,184,.24), transparent 60%),
+    linear-gradient(135deg, #090d29 0%, #141047 55%, #1f1250 100%);
+}
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #0d1037 0%, #1b1253 100%);
+  border-right: 1px solid rgba(255,255,255,.08);
+}
+h1, h2, h3, h5 { font-family: 'Orbitron', sans-serif !important; letter-spacing: .03em; color: #ffffff; }
+
+.hero { padding: 6px 0 4px 0; }
+.hero .title { font-family: 'Orbitron', sans-serif; font-size: 2.1rem; font-weight: 700; color: #fff; line-height: 1.15; }
+.hero .sub { color: #c9c6ff; font-size: .95rem; margin-top: 4px; }
+.divider { height: 2px; background: linear-gradient(90deg, #4f8bff, #8b5cf6, #ff5fb8); border-radius: 2px; margin: 12px 0 24px 0; }
+
+.brand { font-family: 'Orbitron', sans-serif; font-size: 1.35rem; letter-spacing: .3em; text-align: center; color: #fff;
+  text-shadow: 0 0 14px rgba(139,92,246,.9); margin: 14px 0 4px 0; }
+.status { background: rgba(70, 220, 160, .12); border: 1px solid rgba(70,220,160,.45); color: #7ff0c4;
+  border-radius: 14px; padding: 12px 14px; font-size: .9rem; }
+
+.kpi { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); border-radius: 18px;
+  padding: 16px 20px; backdrop-filter: blur(10px); box-shadow: 0 0 26px rgba(139,92,246,.18); }
+.kpi .lbl { font-size: .8rem; color: #bdbaff; }
+.kpi .val { font-family: 'Orbitron', sans-serif; font-size: 1.75rem; font-weight: 700;
+  background: linear-gradient(90deg, #8fb4ff, #ff7ac8); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+.stButton > button, [data-testid="stDownloadButton"] button, [data-testid="stFormSubmitButton"] button {
+  background: linear-gradient(90deg, #4f8bff, #8b5cf6 55%, #ff5fb8); color: #fff; border: 0; border-radius: 14px;
+  padding: .6rem 1.4rem; font-weight: 600; box-shadow: 0 8px 24px rgba(139,92,246,.35);
+}
+.stButton > button:hover, [data-testid="stDownloadButton"] button:hover { filter: brightness(1.12); color: #fff; }
+.stTextArea textarea, .stTextInput input, .stDateInput input, .stNumberInput input {
+  background: rgba(255,255,255,.07) !important; color: #fff !important;
+  border: 1px solid rgba(255,255,255,.18) !important; border-radius: 12px !important;
+}
+.footer { color: #8f8cc4; font-size: .8rem; border-top: 1px solid rgba(255,255,255,.1); margin-top: 36px; padding-top: 14px; }
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
+REDES = U.PLATAFORMAS + ["Outra"]
+
+
+# --------------------------------------------------------------------------- #
+# Estado
+# --------------------------------------------------------------------------- #
+def init_state():
+    st.session_state.setdefault("links", [])
+    st.session_state.setdefault("txt_links", "")
+    st.session_state.setdefault("videos", U.videos_vazio())
+    st.session_state.setdefault("p_ini", date.today() - timedelta(days=30))
+    st.session_state.setdefault("p_fim", date.today())
+    st.session_state.setdefault("p_redes", REDES)
+
+
+init_state()
+
+
+def kpi_html(label, value):
+    return f'<div class="kpi"><div class="lbl">{label}</div><div class="val">{value}</div></div>'
+
+
+def kpis(items):
+    cols = st.columns(len(items))
+    for col, (label, value) in zip(cols, items):
+        col.markdown(kpi_html(label, value), unsafe_allow_html=True)
+
+
+def periodo():
+    ini, fim = st.session_state.p_ini, st.session_state.p_fim
+    redes = st.session_state.p_redes
+    return ini, fim, redes, U.filtrar_periodo(st.session_state.videos, ini, fim, redes)
+
+
+def youtube_key():
+    try:
+        return st.secrets.get("YOUTUBE_API_KEY", "")
+    except Exception:
+        return ""
+
+
+# --------------------------------------------------------------------------- #
+# Barra lateral
+# --------------------------------------------------------------------------- #
+with st.sidebar:
+    st.markdown('<div class="status">● Sistema online<br><small>Portal de embaixadores</small></div>',
+                unsafe_allow_html=True)
+    st.markdown('<div class="brand">BS LATAM</div><div class="divider"></div>', unsafe_allow_html=True)
+    modulo = st.radio(
+        "Módulos operativos",
+        ["🔗  Corretor de links", "📊  Análise de vídeos", "📥  Relatórios"],
+    )
+    with st.expander("🔑 YouTube API (opcional)"):
+        chave_digitada = st.text_input("Chave da API", type="password",
+                                       help="Gratuita no Google Cloud. Preenche views e curtidas de vídeos do YouTube.")
+    yt_key = chave_digitada or youtube_key()
+    st.markdown("---")
+    if st.button("♻️ Reiniciar dados"):
+        for k in ("links", "videos", "txt_links"):
+            st.session_state.pop(k, None)
+        init_state()
+        st.rerun()
+
+st.markdown(
+    '<div class="hero"><div class="title">Portal de Embaixadores</div>'
+    '<div class="sub">Links de perfil corrigidos e desempenho de vídeos em um só lugar.</div></div>'
+    '<div class="divider"></div>',
+    unsafe_allow_html=True,
+)
+
+
+# --------------------------------------------------------------------------- #
+# Aba 1: Corretor de links
+# --------------------------------------------------------------------------- #
+def processar_links():
+    antigos = [r["Original"] for r in st.session_state.links]
+    novo = st.session_state.txt_links
+    st.session_state.links = U.corrigir_lista("\n".join(antigos) + "\n" + novo)
+    st.session_state.txt_links = ""
+
+
+def limpar_links():
+    st.session_state.links = []
+
+
+def aba_links():
+    st.subheader("Corretor de links de perfil")
+    st.caption("Funciona com Instagram, TikTok, YouTube, Facebook e Kwai. Cole um link por vez ou vários de uma vez.")
+    st.text_area("Cole os links de perfil", key="txt_links", height=140,
+                 placeholder="https://www.instagram.com/usuario/?igsh=abc123\nhttps://tiktok.com/@usuario?lang=pt-BR")
+    c1, c2, _ = st.columns([1, 1, 4])
+    c1.button("✨ Corrigir links", on_click=processar_links)
+    c2.button("Limpar lista", on_click=limpar_links)
+
+    links = st.session_state.links
+    if not links:
+        st.info("Cole os links acima e clique em Corrigir links para ver o resultado.")
+        return
+    df = pd.DataFrame(links)
+    cont = df["Status"].value_counts()
+    kpis([
+        ("Links na lista", len(df)),
+        ("Corrigidos", int(cont.get(U.ST_FIX, 0))),
+        ("Para verificar", int(cont.get(U.ST_CHECK, 0)) + int(cont.get(U.ST_DUP, 0))),
+        ("Inválidos", int(cont.get(U.ST_BAD, 0))),
+    ])
+    st.write("")
+    st.dataframe(
+        df, hide_index=True, width="stretch",
+        column_config={"Link corrigido": st.column_config.LinkColumn("Link corrigido")},
+    )
+    prontos = df[df["Status"].isin([U.ST_OK, U.ST_FIX])]["Link corrigido"].tolist()
+    if prontos:
+        st.markdown("##### Links prontos para copiar")
+        st.code("\n".join(prontos), language=None)
+
+
+# --------------------------------------------------------------------------- #
+# Aba 2: Análise de vídeos
+# --------------------------------------------------------------------------- #
+def aba_videos():
+    st.subheader("Análise de vídeos por período")
+    videos = st.session_state.videos
+
+    with st.expander("➕ Adicionar vídeo", expanded=len(videos) == 0):
+        with st.form("form_video", clear_on_submit=True):
+            link = st.text_input("Link do vídeo")
+            c1, c2 = st.columns(2)
+            emb = c1.text_input("Embaixador")
+            data = c2.date_input("Data de postagem", value=date.today(), format="DD/MM/YYYY")
+            c3, c4, c5 = st.columns(3)
+            views = c3.number_input("Visualizações", min_value=0, step=1)
+            likes = c4.number_input("Curtidas", min_value=0, step=1)
+            saves = c5.number_input("Salvamentos", min_value=0, step=1)
+            auto = st.checkbox("Buscar views e curtidas automaticamente (só YouTube, precisa da chave na barra lateral)")
+            enviado = st.form_submit_button("Adicionar vídeo")
+        if enviado:
+            if not link.strip():
+                st.warning("Cole o link do vídeo.")
+            else:
+                rede = U.detectar_rede(link)
+                data_ts = pd.Timestamp(data)
+                if auto and rede == "YouTube":
+                    vid = U.youtube_video_id(link)
+                    if not yt_key:
+                        st.warning("Informe a chave da YouTube API na barra lateral para a busca automática.")
+                    elif not vid:
+                        st.warning("Não consegui identificar o vídeo neste link do YouTube.")
+                    else:
+                        try:
+                            stats = U.buscar_youtube(vid, yt_key)
+                            views, likes, data_ts = stats["views"], stats["likes"], stats["data"]
+                        except Exception as e:
+                            st.warning(f"Busca automática falhou ({e}). Usei os números digitados.")
+                nova = pd.DataFrame([{
+                    "Link": link.strip(), "Embaixador": emb.strip(), "Rede": rede, "Data": data_ts,
+                    "Visualizações": int(views), "Curtidas": int(likes), "Salvamentos": int(saves),
+                }])
+                st.session_state.videos = pd.concat([U.normalizar_videos(videos), nova], ignore_index=True)
+                st.rerun()
+
+    st.markdown("##### Período")
+    c1, c2, c3 = st.columns([1, 1, 2])
+    c1.date_input("De", key="p_ini", format="DD/MM/YYYY")
+    c2.date_input("Até", key="p_fim", format="DD/MM/YYYY")
+    c3.multiselect("Redes", REDES, key="p_redes")
+
+    resumo_box = st.container()
+
+    st.markdown("##### Tabela de vídeos")
+    st.caption("Edite os números direto na tabela. Para apagar, selecione a linha e use a lixeira.")
+    editada = st.data_editor(
+        U.normalizar_videos(st.session_state.videos),
+        num_rows="dynamic", hide_index=True, width="stretch", key="ed_videos",
+        column_config={
+            "Link": st.column_config.TextColumn("Link do vídeo", width="large"),
+            "Rede": st.column_config.SelectboxColumn("Rede", options=REDES),
+            "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+            "Visualizações": st.column_config.NumberColumn(format="%d", min_value=0),
+            "Curtidas": st.column_config.NumberColumn(format="%d", min_value=0),
+            "Salvamentos": st.column_config.NumberColumn(format="%d", min_value=0),
+        },
+    )
+    st.session_state.videos = U.normalizar_videos(editada)
+
+    ini, fim, redes, filtrado = periodo()
+    with resumo_box:
+        if ini > fim:
+            st.error("A data inicial é maior que a final.")
+        t = U.totais(filtrado)
+        kpis([(k, U.fmt(v)) for k, v in t.items()])
+        if len(filtrado):
+            st.write("")
+            por_rede = U.resumo_por_rede(filtrado)
+            g1, g2 = st.columns([3, 2])
+            g1.bar_chart(por_rede.set_index("Rede")[["Visualizações", "Curtidas", "Salvamentos"]],
+                         color=["#4f8bff", "#8b5cf6", "#ff5fb8"])
+            g2.dataframe(por_rede, hide_index=True, width="stretch")
+        else:
+            st.info("Nenhum vídeo neste período. Adicione vídeos ou ajuste as datas.")
+
+
+# --------------------------------------------------------------------------- #
+# Aba 3: Relatórios
+# --------------------------------------------------------------------------- #
+def aba_relatorios():
+    st.subheader("Relatórios")
+    ini, fim, redes, filtrado = periodo()
+    st.caption(f"Período do relatório: {ini:%d/%m/%Y} a {fim:%d/%m/%Y}. "
+               "Para mudar datas e redes, use a aba Análise de vídeos.")
+    t = U.totais(filtrado)
+    kpis([(k, U.fmt(v)) for k, v in t.items()])
+    st.write("")
+    if filtrado.empty and not st.session_state.links:
+        st.info("Ainda não há dados para exportar. Corrija links ou adicione vídeos primeiro.")
+        return
+    links_df = pd.DataFrame(st.session_state.links)
+    stamp = f"{ini:%Y%m%d}_{fim:%Y%m%d}"
+    c1, c2, _ = st.columns([1, 1, 2])
+    c1.download_button(
+        "📊 Baixar planilha (Excel)", data=U.gerar_excel(links_df, filtrado, ini, fim),
+        file_name=f"relatorio_embaixadores_{stamp}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    c2.download_button(
+        "📄 Baixar relatório (PDF)", data=U.gerar_pdf(filtrado, ini, fim),
+        file_name=f"relatorio_embaixadores_{stamp}.pdf", mime="application/pdf",
+    )
+
+
+if modulo.startswith("🔗"):
+    aba_links()
+elif modulo.startswith("📊"):
+    aba_videos()
+else:
+    aba_relatorios()
+
+st.markdown(
+    f'<div class="footer">BS LATAM Embaixadores • {datetime.now():%Y-%m-%d %H:%M:%S} • Blood Strike Operations</div>',
+    unsafe_allow_html=True,
+)
