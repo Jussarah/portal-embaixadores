@@ -5,11 +5,11 @@ import streamlit as st
 
 import utils as U
 
-st.set_page_config(page_title="BS LATAM | Embaixadores", page_icon="💠", layout="wide")
+st.set_page_config(page_title="Tifly | by zsarytta", page_icon="💠", layout="wide")
 
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Sora:wght@300;400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600&family=Sora:wght@300;400;600&display=swap');
 
 html, body, [data-testid="stAppViewContainer"] { font-family: 'Sora', sans-serif; }
 [data-testid="stAppViewContainer"] {
@@ -23,22 +23,24 @@ html, body, [data-testid="stAppViewContainer"] { font-family: 'Sora', sans-serif
   background: linear-gradient(180deg, #0d1037 0%, #1b1253 100%);
   border-right: 1px solid rgba(255,255,255,.08);
 }
-h1, h2, h3, h5 { font-family: 'Orbitron', sans-serif !important; letter-spacing: .03em; color: #ffffff; }
+h1, h2, h3, h5 { font-family: 'Unbounded', sans-serif !important; letter-spacing: .01em; color: #ffffff; }
 
 .hero { padding: 6px 0 4px 0; }
-.hero .title { font-family: 'Orbitron', sans-serif; font-size: 2.1rem; font-weight: 700; color: #fff; line-height: 1.15; }
+.hero .title { font-family: 'Unbounded', sans-serif; font-size: 2.2rem; font-weight: 600; color: #fff; line-height: 1.15; }
 .hero .sub { color: #c9c6ff; font-size: .95rem; margin-top: 4px; }
 .divider { height: 2px; background: linear-gradient(90deg, #4f8bff, #8b5cf6, #ff5fb8); border-radius: 2px; margin: 12px 0 24px 0; }
 
-.brand { font-family: 'Orbitron', sans-serif; font-size: 1.35rem; letter-spacing: .3em; text-align: center; color: #fff;
-  text-shadow: 0 0 14px rgba(139,92,246,.9); margin: 14px 0 4px 0; }
+.brand { display: flex; align-items: center; gap: 12px; margin: 18px 0 4px 2px; }
+.brand .name { font-family: 'Unbounded', sans-serif; font-size: 1.6rem; font-weight: 600; color: #fff; line-height: 1.05; }
+.brand .by { font-size: .82rem; color: #ff8fcf; margin-top: 2px; }
+.menu-title { font-size: .85rem; color: #bdbaff; margin: 10px 0 2px 2px; }
 .status { background: rgba(70, 220, 160, .12); border: 1px solid rgba(70,220,160,.45); color: #7ff0c4;
   border-radius: 14px; padding: 12px 14px; font-size: .9rem; }
 
 .kpi { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); border-radius: 18px;
   padding: 16px 20px; backdrop-filter: blur(10px); box-shadow: 0 0 26px rgba(139,92,246,.18); }
 .kpi .lbl { font-size: .8rem; color: #bdbaff; }
-.kpi .val { font-family: 'Orbitron', sans-serif; font-size: 1.75rem; font-weight: 700;
+.kpi .val { font-family: 'Unbounded', sans-serif; font-size: 1.75rem; font-weight: 700;
   background: linear-gradient(90deg, #8fb4ff, #ff7ac8); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
 .stButton > button, [data-testid="stDownloadButton"] button, [data-testid="stFormSubmitButton"] button {
@@ -56,6 +58,8 @@ h1, h2, h3, h5 { font-family: 'Orbitron', sans-serif !important; letter-spacing:
 st.markdown(CSS, unsafe_allow_html=True)
 
 REDES = U.PLATAFORMAS + ["Outra"]
+
+LOGO = '<svg width="46" height="46" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="tf" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4f8bff"/><stop offset=".55" stop-color="#8b5cf6"/><stop offset="1" stop-color="#ff5fb8"/></linearGradient></defs><path d="M32 34C18 36 6 28 6 14c14-2 25 6 26 20z" fill="url(#tf)"/><path d="M32 34c14 2 26-6 26-20-14-2-25 6-26 20z" fill="url(#tf)" opacity=".72"/><path d="M32 34c-10 6-18 16-14 24 10-2 15-12 14-24z" fill="url(#tf)" opacity=".55"/><path d="M32 34c10 6 18 16 14 24-10-2-15-12-14-24z" fill="url(#tf)" opacity=".38"/><circle cx="32" cy="34" r="3.2" fill="#fff"/></svg>'
 
 
 # --------------------------------------------------------------------------- #
@@ -100,12 +104,18 @@ def youtube_key():
 # Barra lateral
 # --------------------------------------------------------------------------- #
 with st.sidebar:
-    st.markdown('<div class="status">● Sistema online<br><small>Portal de embaixadores</small></div>',
+    st.markdown('<div class="status">● Sistema online<br><small>Tifly • painel de embaixadores</small></div>',
                 unsafe_allow_html=True)
-    st.markdown('<div class="brand">BS LATAM</div><div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="brand">' + LOGO + '<div><div class="name">Tifly</div>'
+        '<div class="by">by zsarytta</div></div></div><div class="divider"></div>'
+        '<div class="menu-title">Menu</div>',
+        unsafe_allow_html=True,
+    )
     modulo = st.radio(
-        "Módulos operativos",
+        "Menu",
         ["🔗  Corretor de links", "📊  Análise de vídeos", "📥  Relatórios"],
+        label_visibility="collapsed",
     )
     with st.expander("🔑 YouTube API (opcional)"):
         chave_digitada = st.text_input("Chave da API", type="password",
@@ -119,8 +129,8 @@ with st.sidebar:
         st.rerun()
 
 st.markdown(
-    '<div class="hero"><div class="title">Portal de Embaixadores</div>'
-    '<div class="sub">Links de perfil corrigidos e desempenho de vídeos em um só lugar.</div></div>'
+    '<div class="hero"><div class="title">Tifly</div>'
+    '<div class="sub">Seu painel de embaixadores: links de perfil corretos e desempenho de vídeos em um só lugar.</div></div>'
     '<div class="divider"></div>',
     unsafe_allow_html=True,
 )
@@ -145,7 +155,7 @@ def aba_links():
     st.caption("Funciona com Instagram, TikTok, YouTube, Facebook e Kwai. Cole um link por vez ou vários de uma vez.")
     st.text_area("Cole os links de perfil", key="txt_links", height=140,
                  placeholder="https://www.instagram.com/usuario/?igsh=abc123\nhttps://tiktok.com/@usuario?lang=pt-BR")
-    c1, c2, _ = st.columns([1, 1, 4])
+    c1, c2, _ = st.columns([1.6, 1.4, 3])
     c1.button("✨ Corrigir links", on_click=processar_links)
     c2.button("Limpar lista", on_click=limpar_links)
 
@@ -293,6 +303,6 @@ else:
     aba_relatorios()
 
 st.markdown(
-    f'<div class="footer">BS LATAM Embaixadores • {datetime.now():%Y-%m-%d %H:%M:%S} • Blood Strike Operations</div>',
+    f'<div class="footer">Tifly • criado por zsarytta • {datetime.now():%d/%m/%Y %H:%M}</div>',
     unsafe_allow_html=True,
 )
